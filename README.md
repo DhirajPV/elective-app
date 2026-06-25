@@ -117,6 +117,7 @@ When you request more creators than available, `onboard` returns however many ex
 | Empty list on onboard | Returns `{ onboarded: [], remaining: 0 }` |
 | Cohort fully drained | Removed from the list immediately |
 | Process restart | State rehydrated from SQLite; nothing lost |
+| `GET /history?limit=abc` (non-integer) | `parseInt` returns `NaN`; validated before passing to SQLite, falls back to default limit (50) |
 
 ---
 

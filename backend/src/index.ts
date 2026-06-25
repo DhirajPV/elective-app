@@ -111,7 +111,8 @@ app.get("/creators/count", (_req: Request, res: Response) => {
  * Returns the recorded history of add/onboard events, newest first.
  */
 app.get("/history", (req: Request, res: Response) => {
-  const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : undefined;
+  const raw = parseInt(String(req.query.limit ?? ""), 10);
+  const limit = Number.isInteger(raw) && raw > 0 ? raw : undefined;
   res.json({ events: service.history(limit) });
 });
 
