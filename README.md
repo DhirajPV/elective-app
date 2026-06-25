@@ -59,10 +59,6 @@ spec walkthrough end-to-end and covers persistence/restart and history.
 
 ## Design decisions
 
-### Why a backend at all?
-
-The spec says "wrap the system in a simple web page" which reads as frontend-only, but the 4–6 hour estimate implied more. I asked before starting and confirmed a backend was expected.
-
 ### WaitingList data model
 
 Cohorts are stored as a plain array, newest at index 0, oldest at the last index — directly mirroring the spec's visual model of `[6, 10]`. This makes `add` (prepend or fill index 0) and `onboard` (drain from the end) straightforward with no reversal logic.
@@ -71,9 +67,9 @@ Cohorts are stored as a plain array, newest at index 0, oldest at the last index
 
 Each slot in a cohort is a `Creator` object (`id`, `name`, `handle`, `joinedAt`) rather than a bare count — see [creator.ts](backend/src/creator.ts). A creator represents a real person who will be onboarded, so the model is built to grow (tier, payout details, etc.) without touching the queue logic. The count-only API still works: `POST /creators { count: 5 }` mints five creators with generated placeholder identities, but you can also pass explicit `creators: [{ name, handle }]`.
 
-### "Onboard", not "delete"
+### "Onboard"
 
-This is a queue of creators we pull onto the platform, not a collection we delete from. The operation is therefore `onboard` (`POST /creators/onboard`), and it *returns* the creators it pulled — they leave the queue and are recorded in history with status `onboarded`, never destroyed. The old `DELETE /creators` is gone.
+This is a queue of creators we pull onto the platform, not a collection we delete from. The operation is therefore `onboard` (`POST /creators/onboard`), and it *returns* the creators it pulled — they leave the queue and are recorded in history with status `onboarded`, never destroyed.
 
 ### SQLite as the source of truth
 
