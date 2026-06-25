@@ -12,7 +12,7 @@ npm install
 npm run dev:backend
 
 # Terminal 2 — frontend (port 5173)
-cd frontend && npm run dev
+npm run dev:frontend
 ```
 
 Open http://localhost:5173.
@@ -33,7 +33,8 @@ npm test --workspace=backend
 ```
 
 Runs the suite with Node's built-in test runner (`node:test`). It encodes the
-spec walkthrough end-to-end and covers persistence/restart and history.
+spec walkthrough end-to-end and covers persistence/restart, history, and
+capacity repacking (including that FIFO order is preserved across a repack).
 
 ---
 
@@ -73,7 +74,7 @@ This is a queue of creators we pull onto the platform, not a collection we delet
 
 ### SQLite as the source of truth
 
-Persistence uses Node's built-in [`node:sqlite`](backend/src/db.ts) — zero native dependencies, real SQL. The database is authoritative: on boot the in-memory `WaitingList` is rehydrated from it ([waitingListService.ts](backend/src/waitingListService.ts)), and every mutation is written back inside a transaction. An append-only `events` table records the full history (`list_created`, `creators_added`, `creators_onboarded`). The domain model ([waitingList.ts](backend/src/waitingList.ts)) stays pure and I/O-free so the queue logic remains trivially unit-testable; the service layer is the only seam that touches the DB.
+Persistence uses Node's built-in [`node:sqlite`](backend/src/db.ts) — zero native dependencies, real SQL. The database is authoritative: on boot the in-memory `WaitingList` is rehydrated from it ([waitingListService.ts](backend/src/waitingListService.ts)), and every mutation is written back inside a transaction. An append-only `events` table records the full history (`list_created`, `creators_added`, `creators_onboarded`, `capacity_changed`). The domain model ([waitingList.ts](backend/src/waitingList.ts)) stays pure and I/O-free so the queue logic remains trivially unit-testable; the service layer is the only seam that touches the DB.
 
 ### Branded type for capacity
 
@@ -124,6 +125,12 @@ When you request more creators than available, `onboard` returns however many ex
 The in-memory `WaitingList` is the authoritative state between DB writes. On every mutation, the service mutates the in-memory model first, then persists it. This means **two instances of the backend would have independent, immediately diverging queues** — there is no distributed lock, no leader election, and no mechanism for one node to invalidate another's cache.
 
 To scale horizontally you'd need to either: (a) drop the in-memory model and make all reads/writes go directly to the DB, (b) front SQLite with a distributed lock (e.g. Redis `SETNX`), or (c) migrate to a DB with row-level advisory locks (PostgreSQL) and express every mutation as an atomic SQL operation. The current architecture is correct for single-process deployments and survives restarts, but it is not multi-node safe.
+
+### Write-failure divergence (even on a single node)
+
+The same mutate-then-persist ordering has a subtler failure mode that doesn't require a second instance. Each service method changes the in-memory `WaitingList` **first**, then writes the result to SQLite. The DB write is transactional, so a failure mid-write (disk full, locked file, process killed) leaves the database *consistent* — but the in-memory model has already moved ahead of it. Until the next restart re-hydrates from disk, reads would reflect a state that was never durably persisted.
+
+This is low-probability (a synchronous local SQLite write rarely fails) and self-healing on restart, but it is a real consistency gap. The fix is small and contained: wrap each mutation so that if the persist throws, the in-memory list is rebuilt from the DB snapshot (the source of truth, left untouched by the rolled-back transaction) before the error propagates. I've documented it rather than implemented it to keep the change set focused; it's the first thing I'd harden before this ran anywhere it mattered.
 
 ### Security considerations
 
