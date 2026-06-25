@@ -121,6 +121,38 @@ When you request more creators than available, `onboard` returns however many ex
 
 ---
 
+## Known limitations & future work
+
+### Single-node only
+
+The in-memory `WaitingList` is the authoritative state between DB writes. On every mutation, the service mutates the in-memory model first, then persists it. This means **two instances of the backend would have independent, immediately diverging queues** — there is no distributed lock, no leader election, and no mechanism for one node to invalidate another's cache.
+
+To scale horizontally you'd need to either: (a) drop the in-memory model and make all reads/writes go directly to the DB, (b) front SQLite with a distributed lock (e.g. Redis `SETNX`), or (c) migrate to a DB with row-level advisory locks (PostgreSQL) and express every mutation as an atomic SQL operation. The current architecture is correct for single-process deployments and survives restarts, but it is not multi-node safe.
+
+### Security considerations
+
+**Authentication & authorization — not implemented.** Any client that can reach the backend can add creators to the queue, onboard them, or reconfigure capacity. In production, `POST /creators/onboard` and `PUT /capacity` are admin-only operations and should sit behind authentication (JWT, session cookie, API key) with role-based access control. Adding creators to the queue would similarly need a verified identity.
+
+**Audit trail without actor.** The `events` table records what happened and when, but not who triggered it. The events schema has room to add a `performed_by` column; once authentication is in place, the service layer can record the acting user's id on every `creators_onboarded` and `capacity_changed` event.
+
+**Input sanitization.** Creator `name` and `handle` are stored and returned as-is — no length cap, no character-set restriction. React's JSX escapes text content on render so XSS isn't directly exploitable in the current frontend, but values would need sanitization before being rendered in any non-React context (emails, webhooks, admin dashboards). The backend also has no rate limiting or request-size cap beyond Express's default 100 kb body limit.
+
+**CORS.** The backend currently allows all origins (`cors()` with no options). In production this should be locked to the frontend's origin.
+
+**SQL injection** is not a risk — all DB operations use parameterized prepared statements throughout.
+
+### Onboard response includes full creator records
+
+`POST /creators/onboard` already returns the full creator objects for every creator pulled off the queue:
+
+```json
+{ "onboarded": 3, "creators": [{ "id": "…", "name": "…", "handle": "…", "joinedAt": "…" }], … }
+```
+
+The spec treated creators as integers for simplicity, and the frontend only surfaces the count. The data is there if a downstream consumer (webhook, CRM sync, notification service) needs to act on individual creators as they're onboarded.
+
+---
+
 ## API
 
 ### `GET /state`
